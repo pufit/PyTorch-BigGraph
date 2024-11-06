@@ -8,6 +8,7 @@
 
 import logging
 import math
+import random
 import time
 from collections import defaultdict
 from functools import partial
@@ -817,7 +818,7 @@ class TrainingCoordinator:
             if (entity, part) in holder.partitioned_embeddings:
                 logger.debug(f"Already in memory: ({entity} {part})")
             else:
-                logger.debug('will load', (entity, part))
+                logger.debug('will load %s', (entity, part))
                 need_to_load[entity].add((entity, part))
 
         if old_b is not None:
