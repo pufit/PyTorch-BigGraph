@@ -77,6 +77,14 @@ class EntitySchema(Schema):
         metadata={"help": "Override the default dimension for this entity."},
     )
 
+    max_partitioned_embeddings_in_memory: int = attr.ib(
+        default=1,
+        validator=non_negative,
+        metadata={
+            "help": "TBA"
+        },
+    )
+
 
 @schema
 class RelationSchema(Schema):
@@ -420,13 +428,6 @@ class ConfigSchema(Schema):
             "mode, batches will contain edges of multiple "
             "relation types and negatives will be sampled "
             "differently."
-        },
-    )
-    max_partitioned_embeddings_in_memory: int = attr.ib(
-        default=1,
-        validator=non_negative,
-        metadata={
-            "help": "TBA"
         },
     )
 

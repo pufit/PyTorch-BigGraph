@@ -280,23 +280,24 @@ class TrainingCoordinator:
         )
         for entity_type, counts in entity_counts.items():
             max_count = max(counts)
-            # if holder.nparts_lhs == 1 and holder.nparts_rhs == 1:
-            #     num_sides = 1
-            # else:
-            #     num_sides = (
-            #         (1 if entity_type in holder.lhs_partitioned_types else 0)
-            #         + (1 if entity_type in holder.rhs_partitioned_types else 0)
-            #         + (
-            #             1
-            #             if entity_type
-            #             in (
-            #                 holder.lhs_unpartitioned_types
-            #                 | holder.rhs_unpartitioned_types
-            #             )
-            #             else 0
-            #         )
-            #     )
-            for i in range(config.max_partitioned_embeddings_in_memory):
+            if holder.nparts_lhs == 1 and holder.nparts_rhs == 1:
+                num_sides = 1
+            else:
+                num_sides = (
+                    (1 if entity_type in holder.lhs_partitioned_types else 0)
+                    + (1 if entity_type in holder.rhs_partitioned_types else 0)
+                    + (
+                        1
+                        if entity_type
+                        in (
+                            holder.lhs_unpartitioned_types
+                            | holder.rhs_unpartitioned_types
+                        )
+                        else 0
+                    )
+                )
+            print(entity_type, num_sides)
+            for i in range(config.entities[entity_type].max_partitioned_embeddings_in_memory):
                 logger.debug(f"Allocating {round(max_count * config.entity_dimension(entity_type) / 1024 / 1024 * 4, 2)} MB shared memory for {entity_type} part {i}")
                 embedding_storage_freelist[entity_type].add(
                     allocate_shared_tensor(
@@ -811,21 +812,20 @@ class TrainingCoordinator:
             new_parts.update((e, new_b.lhs) for e in holder.lhs_partitioned_types)
             new_parts.update((e, new_b.rhs) for e in holder.rhs_partitioned_types)
 
-        assert old_parts == holder.partitioned_embeddings.keys()
-
-        need_to_load: list[Tuple[EntityName, Partition]] = []
+        need_to_load: Dict[EntityName, Set[Tuple[EntityName, Partition]]] = defaultdict(set)
         for entity, part in new_parts - old_parts:
             if (entity, part) in holder.partitioned_embeddings:
                 logger.debug(f"Already in memory: ({entity} {part})")
             else:
-                need_to_load.append((entity, part))
+                logger.debug('will load', (entity, part))
+                need_to_load[entity].add((entity, part))
 
         if old_b is not None:
             if old_stats is None:
                 raise TypeError("Got old bucket but not its stats")
             logger.info("Saving partitioned embeddings to checkpoint")
             for entity, part in old_parts - new_parts:
-                if len(holder.partitioned_embeddings) + len(need_to_load) <= self.config.max_partitioned_embeddings_in_memory and not force_save:
+                if len(holder.partitioned_embeddings) + len(need_to_load[entity]) <= self.config.entities[entity].max_partitioned_embeddings_in_memory and not force_save:
                     logger.debug(f"Keeping ({entity} {part}) in memory")
                     continue
 
@@ -845,21 +845,23 @@ class TrainingCoordinator:
 
         if new_b is not None:
             logger.info("Loading partitioned embeddings from checkpoint")
-            for entity, part in need_to_load:
-                logger.debug(f"Loading ({entity} {part})")
-                force_dirty = self.bucket_scheduler.check_and_set_dirty(entity, part)
-                count = self.entity_counts[entity][part]
-                s = self.embedding_storage_freelist[entity].pop()
-                dimension = self.config.entity_dimension(entity)
-                embs = torch.FloatTensor(s).view(-1, dimension)[:count]
-                embs, optimizer = self._load_embeddings(
-                    entity, part, out=embs, strict=self.strict, force_dirty=force_dirty
-                )
-                holder.partitioned_embeddings[entity, part] = embs
-                self.trainer.partitioned_optimizers[entity, part] = optimizer
-                io_bytes += embs.numel() * embs.element_size()  # ignore optim state
+            for entity in need_to_load:
+                for _, part in need_to_load[entity]:
+                    logger.debug(f"Loading ({entity} {part})")
+                    force_dirty = self.bucket_scheduler.check_and_set_dirty(entity, part)
+                    count = self.entity_counts[entity][part]
+                    s = self.embedding_storage_freelist[entity].pop()
+                    dimension = self.config.entity_dimension(entity)
+                    embs = torch.FloatTensor(s).view(-1, dimension)[:count]
+                    embs, optimizer = self._load_embeddings(
+                        entity, part, out=embs, strict=self.strict, force_dirty=force_dirty
+                    )
+                    holder.partitioned_embeddings[entity, part] = embs
+                    self.trainer.partitioned_optimizers[entity, part] = optimizer
+                    io_bytes += embs.numel() * embs.element_size()  # ignore optim state
 
-        assert new_parts == holder.partitioned_embeddings.keys()
+        print(f'new_parts: {new_parts}')
+        print(f'holder.partitioned_embeddings.keys(): {list(holder.partitioned_embeddings.keys())}')
 
         return io_bytes
 
