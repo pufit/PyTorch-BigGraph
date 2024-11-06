@@ -280,23 +280,24 @@ class TrainingCoordinator:
         )
         for entity_type, counts in entity_counts.items():
             max_count = max(counts)
-            if holder.nparts_lhs == 1 and holder.nparts_rhs == 1:
-                num_sides = 1
-            else:
-                num_sides = (
-                    (1 if entity_type in holder.lhs_partitioned_types else 0)
-                    + (1 if entity_type in holder.rhs_partitioned_types else 0)
-                    + (
-                        1
-                        if entity_type
-                        in (
-                            holder.lhs_unpartitioned_types
-                            | holder.rhs_unpartitioned_types
-                        )
-                        else 0
-                    )
-                )
-            for _ in range(config.max_partitioned_embeddings_in_memory):
+            # if holder.nparts_lhs == 1 and holder.nparts_rhs == 1:
+            #     num_sides = 1
+            # else:
+            #     num_sides = (
+            #         (1 if entity_type in holder.lhs_partitioned_types else 0)
+            #         + (1 if entity_type in holder.rhs_partitioned_types else 0)
+            #         + (
+            #             1
+            #             if entity_type
+            #             in (
+            #                 holder.lhs_unpartitioned_types
+            #                 | holder.rhs_unpartitioned_types
+            #             )
+            #             else 0
+            #         )
+            #     )
+            for i in range(config.max_partitioned_embeddings_in_memory):
+                logger.debug(f"Allocating {round(max_count * config.entity_dimension(entity_type) / 1024 / 1024 * 4, 2)} MB shared memory for {entity_type} part {i}")
                 embedding_storage_freelist[entity_type].add(
                     allocate_shared_tensor(
                         (max_count, config.entity_dimension(entity_type)),
