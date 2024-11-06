@@ -422,6 +422,13 @@ class ConfigSchema(Schema):
             "differently."
         },
     )
+    max_partitioned_embeddings_in_memory: int = attr.ib(
+        default=1,
+        validator=non_negative,
+        metadata={
+            "help": "TBA"
+        },
+    )
 
     # distributed training config options
 

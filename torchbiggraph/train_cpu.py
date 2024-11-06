@@ -807,11 +807,22 @@ class TrainingCoordinator:
 
         assert old_parts == holder.partitioned_embeddings.keys()
 
+        need_to_load: list[Tuple[EntityName, Partition]] = []
+        for entity, part in new_parts - old_parts:
+            if (entity, part) in holder.partitioned_embeddings:
+                logger.debug(f"Already in memory: ({entity} {part})")
+            else:
+                need_to_load.append((entity, part))
+
         if old_b is not None:
             if old_stats is None:
                 raise TypeError("Got old bucket but not its stats")
             logger.info("Saving partitioned embeddings to checkpoint")
             for entity, part in old_parts - new_parts:
+                if len(holder.partitioned_embeddings) + len(need_to_load) <= self.config.max_partitioned_embeddings_in_memory:
+                    logger.debug(f"Keeping ({entity} {part}) in memory")
+                    continue
+
                 logger.debug(f"Saving ({entity} {part})")
                 embs = holder.partitioned_embeddings.pop((entity, part))
                 optimizer = self.trainer.partitioned_optimizers.pop((entity, part))
@@ -828,7 +839,7 @@ class TrainingCoordinator:
 
         if new_b is not None:
             logger.info("Loading partitioned embeddings from checkpoint")
-            for entity, part in new_parts - old_parts:
+            for entity, part in need_to_load:
                 logger.debug(f"Loading ({entity} {part})")
                 force_dirty = self.bucket_scheduler.check_and_set_dirty(entity, part)
                 count = self.entity_counts[entity][part]
