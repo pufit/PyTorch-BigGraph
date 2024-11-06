@@ -296,7 +296,7 @@ class TrainingCoordinator:
                         else 0
                     )
                 )
-            for _ in range(num_sides):
+            for _ in range(config.max_partitioned_embeddings_in_memory):
                 embedding_storage_freelist[entity_type].add(
                     allocate_shared_tensor(
                         (max_count, config.entity_dimension(entity_type)),
