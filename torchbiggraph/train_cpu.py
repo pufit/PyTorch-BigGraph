@@ -714,7 +714,7 @@ class TrainingCoordinator:
                 )
 
             # release the final bucket
-            self._swap_partitioned_embeddings(cur_b, None, cur_stats)
+            self._swap_partitioned_embeddings(cur_b, None, cur_stats, force_save=True)
 
             # Distributed Processing: all machines can leave the barrier now.
             self._barrier()
@@ -791,6 +791,7 @@ class TrainingCoordinator:
         old_b: Optional[Bucket],
         new_b: Optional[Bucket],
         old_stats: Optional[BucketStats],
+        force_save: bool = False,
     ) -> int:
         io_bytes = 0
         logger.info(f"Swapping partitioned embeddings {old_b} {new_b}")
@@ -798,8 +799,12 @@ class TrainingCoordinator:
         holder = self.holder
         old_parts: Set[Tuple[EntityName, Partition]] = set()
         if old_b is not None:
-            old_parts.update((e, old_b.lhs) for e in holder.lhs_partitioned_types)
-            old_parts.update((e, old_b.rhs) for e in holder.rhs_partitioned_types)
+            if force_save:
+                logger.debug("Saving all embeddings for the final checkpoint")
+                old_parts.update(holder.partitioned_embeddings.keys())
+            else:
+                old_parts.update((e, old_b.lhs) for e in holder.lhs_partitioned_types)
+                old_parts.update((e, old_b.rhs) for e in holder.rhs_partitioned_types)
         new_parts: Set[Tuple[EntityName, Partition]] = set()
         if new_b is not None:
             new_parts.update((e, new_b.lhs) for e in holder.lhs_partitioned_types)
@@ -819,7 +824,7 @@ class TrainingCoordinator:
                 raise TypeError("Got old bucket but not its stats")
             logger.info("Saving partitioned embeddings to checkpoint")
             for entity, part in old_parts - new_parts:
-                if len(holder.partitioned_embeddings) + len(need_to_load) <= self.config.max_partitioned_embeddings_in_memory:
+                if len(holder.partitioned_embeddings) + len(need_to_load) <= self.config.max_partitioned_embeddings_in_memory and not force_save:
                     logger.debug(f"Keeping ({entity} {part}) in memory")
                     continue
 
