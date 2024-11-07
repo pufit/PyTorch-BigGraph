@@ -814,33 +814,44 @@ class TrainingCoordinator:
             new_parts.update((e, new_b.rhs) for e in holder.rhs_partitioned_types)
 
         need_to_load: Dict[EntityName, Set[Tuple[EntityName, Partition]]] = defaultdict(set)
-        for entity, part in new_parts - old_parts:
-            if (entity, part) in holder.partitioned_embeddings:
-                logger.debug(f"Already in memory: ({entity} {part})")
-            else:
-                logger.debug('will load %s', (entity, part))
-                need_to_load[entity].add((entity, part))
+        for entity, part in new_parts - old_parts - set(holder.partitioned_embeddings.keys()):
+            logger.debug('will load %s', (entity, part))
+            need_to_load[entity].add((entity, part))
+
+        total_in_hold: Dict[EntityName, int] = defaultdict(int)
+        for entity, part in holder.partitioned_embeddings:
+            total_in_hold[entity] += 1
+
+        possible_to_free: Dict[EntityName, Set[Tuple[EntityName, Partition]]] = defaultdict(set)
+        for entity, part in set(holder.partitioned_embeddings) - new_parts:
+            possible_to_free[entity].add((entity, part))
+
+        logger.debug(f'new_parts: {new_parts}')
+        logger.debug(f'holder.partitioned_embeddings.keys(): {list(holder.partitioned_embeddings.keys())}')
 
         if old_b is not None:
             if old_stats is None:
                 raise TypeError("Got old bucket but not its stats")
             logger.info("Saving partitioned embeddings to checkpoint")
-            for entity, part in old_parts - new_parts:
-                if len(holder.partitioned_embeddings) + len(need_to_load[entity]) <= self.config.entities[entity].max_partitioned_embeddings_in_memory and not force_save:
-                    logger.debug(f"Keeping ({entity} {part}) in memory")
-                    continue
 
-                logger.debug(f"Saving ({entity} {part})")
-                embs = holder.partitioned_embeddings.pop((entity, part))
-                optimizer = self.trainer.partitioned_optimizers.pop((entity, part))
-                self.checkpoint_manager.write(
-                    entity, part, embs.detach(), optimizer.state_dict()
-                )
-                self.embedding_storage_freelist[entity].add(embs.storage())
-                io_bytes += embs.numel() * embs.element_size()  # ignore optim state
-                # these variables are holding large objects; let them be freed
-                del embs
-                del optimizer
+            for entity in possible_to_free:
+                for _, part in sorted(possible_to_free[entity], key=lambda x: random.random()):
+                    if total_in_hold[entity] + len(need_to_load[entity]) <= self.config.entities[entity].max_partitioned_embeddings_in_memory and not force_save:
+                        logger.debug(f"Keeping ({entity} {part}) in memory")
+                        continue
+
+                    logger.debug(f"Saving ({entity} {part})")
+                    embs = holder.partitioned_embeddings.pop((entity, part))
+                    optimizer = self.trainer.partitioned_optimizers.pop((entity, part))
+                    self.checkpoint_manager.write(
+                        entity, part, embs.detach(), optimizer.state_dict()
+                    )
+                    total_in_hold[entity] -= 1
+                    self.embedding_storage_freelist[entity].add(embs.storage())
+                    io_bytes += embs.numel() * embs.element_size()  # ignore optim state
+                    # these variables are holding large objects; let them be freed
+                    del embs
+                    del optimizer
 
             self.bucket_scheduler.release_bucket(old_b, old_stats)
 
@@ -860,9 +871,6 @@ class TrainingCoordinator:
                     holder.partitioned_embeddings[entity, part] = embs
                     self.trainer.partitioned_optimizers[entity, part] = optimizer
                     io_bytes += embs.numel() * embs.element_size()  # ignore optim state
-
-        print(f'new_parts: {new_parts}')
-        print(f'holder.partitioned_embeddings.keys(): {list(holder.partitioned_embeddings.keys())}')
 
         return io_bytes
 
